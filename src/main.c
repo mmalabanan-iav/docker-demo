@@ -1,9 +1,9 @@
-// src/main.c - Optimized version
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/cm3/nvic.h>
+#include <libopencmsis/core_cm3.h>
 #include <string.h>
 #include <stdbool.h>
 
@@ -18,7 +18,7 @@
 #define TIM2_PSC_VAL     ((SYSTEM_FREQ_HZ / TIMER_FREQ_HZ) - 1u)
 #define TIM2_ARR_VAL     ((TIMER_FREQ_HZ * BLINK_PERIOD_MS / 1000u) - 1u)
 
-// Command buffer - reduced to 8 bytes (longest command is "blink" = 5 chars)
+// Command buffer - optimized size - longest command is 'blink' (5 chars)
 #define CMD_BUF_SIZE 8
 
 // State management
@@ -30,6 +30,11 @@ typedef enum {
 
 static volatile led_state_t led_state = LED_OFF;
 
+// UART interrupt variables
+static char cmd_buf[CMD_BUF_SIZE];
+static volatile int buf_idx = 0;
+static volatile bool cmd_ready = false;
+
 // --- Optimized UART functions ---
 static inline void uart_putchar(char c) {
     usart_send_blocking(USART2, c);
@@ -37,6 +42,36 @@ static inline void uart_putchar(char c) {
 
 static void uart_puts(const char *s) {
     while (*s) uart_putchar(*s++);
+}
+
+// --- UART interrupt handler ---
+void usart2_isr(void) {
+
+    //TODO: add error handling (overrun, framing, noise)
+
+    // Check if we have received data
+    if (usart_get_flag(USART2, USART_ISR_RXNE)) {
+        char c = usart_recv(USART2);  // Reading data automatically clears RXNE flag
+
+        if (c == '\r' || c == '\n') {
+            if (buf_idx > 0) {
+                cmd_buf[buf_idx] = '\0';
+                // Convert to lowercase
+                for (int i = 0; i < buf_idx; i++) {
+                    if (cmd_buf[i] >= 'A' && cmd_buf[i] <= 'Z') {
+                        cmd_buf[i] += 32;
+                    }
+                }
+                cmd_ready = true;
+            }
+            buf_idx = 0;
+        } else if (buf_idx < CMD_BUF_SIZE - 1) {
+            cmd_buf[buf_idx++] = c;
+            // echo character back
+            uart_putchar(c);
+        }
+        // If buffer full, ignore additional characters
+    }
 }
 
 // --- Hardware setup functions ---
@@ -66,17 +101,24 @@ static void usart_setup(void) {
     usart_set_stopbits(USART2, USART_STOPBITS_1);
     usart_set_flow_control(USART2, USART_FLOWCONTROL_NONE);
     usart_set_mode(USART2, USART_MODE_TX_RX);
+
+    // Enable USART first
     usart_enable(USART2);
+
+    // Then enable RX interrupt
+    usart_enable_rx_interrupt(USART2);
+    nvic_set_priority(NVIC_USART2_IRQ, 1);
+    nvic_enable_irq(NVIC_USART2_IRQ);
 }
 
 static void timer_setup(void) {
     // Reset and configure timer
     rcc_periph_reset_pulse(RST_TIM2);
-    
+
     timer_set_prescaler(TIM2, TIM2_PSC_VAL);
     timer_set_period(TIM2, TIM2_ARR_VAL);
     timer_generate_event(TIM2, TIM_EGR_UG);
-    
+
     // Enable interrupt
     timer_enable_irq(TIM2, TIM_DIER_UIE);
     nvic_enable_irq(NVIC_TIM2_IRQ);
@@ -85,26 +127,23 @@ static void timer_setup(void) {
 // --- LED control functions ---
 static void led_set_state(led_state_t new_state) {
     led_state = new_state;
-    
+
     switch (new_state) {
         case LED_OFF:
             timer_disable_counter(TIM2);
             timer_clear_flag(TIM2, TIM_SR_UIF);
             gpio_clear(LED_PORT, LED_PIN);
             break;
-            
+
         case LED_ON:
             timer_disable_counter(TIM2);
             timer_clear_flag(TIM2, TIM_SR_UIF);
             gpio_set(LED_PORT, LED_PIN);
             break;
-            
+
         case LED_BLINKING:
             timer_set_counter(TIM2, 0);
             timer_enable_counter(TIM2);
-            break;
-        default:
-            // Should not reach here
             break;
     }
 }
@@ -133,20 +172,9 @@ static void process_command(const char *cmd) {
             return;
         }
     }
-    
+
     // Unknown command
     uart_puts("\r\nUnknown: on | off | blink | stop\r\n> ");
-}
-
-// --- Optimized string processing ---
-static inline char to_lowercase(char c) {
-    return (c >= 'A' && c <= 'Z') ? c + 32 : c;
-}
-
-static void to_lowercase_string(char *str, int len) {
-    for (int i = 0; i < len; i++) {
-        str[i] = to_lowercase(str[i]);
-    }
 }
 
 // --- Timer ISR ---
@@ -169,28 +197,14 @@ int main(void) {
 
     uart_puts("STM32L432KC ready. Commands: on | off | blink | stop\r\n> ");
 
-    char cmd_buf[CMD_BUF_SIZE];
-    int buf_idx = 0;
-
     while (1) {
-        if (usart_get_flag(USART2, USART_ISR_RXNE)) {
-            char c = usart_recv(USART2);
-
-            if (c == '\r' || c == '\n') {
-                if (buf_idx > 0) {
-                    cmd_buf[buf_idx] = '\0';
-                    to_lowercase_string(cmd_buf, buf_idx);
-                    process_command(cmd_buf);
-                }
-                buf_idx = 0;
-            } else if (buf_idx < CMD_BUF_SIZE - 1) {
-                cmd_buf[buf_idx++] = c;
-                //echo character back
-                uart_putchar(c);
-            }
-            else {
-            // If buffer full, silently ignore additional characters
-            }
+        // Process commands when ready
+        if (cmd_ready) {
+            cmd_ready = false;  // Clear flag
+            process_command(cmd_buf);
         }
+
+        // CPU can enter sleep mode here for power savings
+        __WFI();  // Wait For Interrupt - for power optimization, probably not necessary
     }
 }
