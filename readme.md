@@ -7,15 +7,17 @@
 | **[USB/IP](https://github.com/dorssel/usbipd-win/releases/latest)** (usbipd) | This connects USB devices into WSL (Win11). Latest version is good to use. | host |
 | **usbutils** | provides commands such as `lsusb` (WSL). | host (WSL) |
 | **openocd** | debugging client | host (WSL) |
-| **gdb-multiarch** | debugging server | host (WSL)  |
+| **gdb-multiarch** | debugging server | host (WSL) |
 | **docker** | Install docker desktop | host |
+| **minicom** | serial communication via UART | host (WSL) |
 
 ## Guides
 
 ### Building Docker image
-At the root of the project folder: 
 
-```docker 
+At the root of the project folder:
+
+```bash
 docker build -t docker-demo .
 ```
 
@@ -23,17 +25,38 @@ docker build -t docker-demo .
 
 Again, at the root of the project folder:
 
-```docker 
+```bash
 docker run -it --rm --privileged -v "$PWD":/workspace docker-demo
 ```
 
 > **NOTE**: You may add `--hostname <name you want>` to distinguish container vs. host.
 
-> **NOTE**: To exit out of the container, `Ctrl+D`.
+### Getting out of the docker container
+
+To exit out of the container, `Ctrl+D`.
+
+### Controlling the LED
+
+1) Open minicom via terminal
+
+    ```bash
+    minicom -b 115200 -D /dev/<device ID>
+    ```
+
+2) Select from the following:
+
+| Command | Description |
+| --- | --- |
+| on | Turns on LED |
+| off | Turns off LED |
+| blink | Blinks LED at 200ms rate |
+| stop | Stops blinking or turns off LED |
 
 ### Connecting microcontroller into WSL
 
-1) Install USB/IP (usbipd), may require admins rights.
+> The following is required when host is Windows 11.
+
+1) Install USB/IP (`usbipd`), may require admins rights.
 2) Once installed, run `usbipd list` in PowerShell.
 
     ![usbipd list](docs/img/usbipd-list.png)
@@ -41,18 +64,27 @@ docker run -it --rm --privileged -v "$PWD":/workspace docker-demo
 3) Run `usbipd bind --busid <BUS ID>` to allow the device to be shared with WSL, may require admin rights.
 
     For example, using the ID in the previous image:
-    > usbipd bind --busid 1-3
+
+    ```powershell
+    usbipd bind --busid 1-3
+    ```
 
     Then executing `usbipd list`,
 
-    ![usbipd list](docs/img/usbipd-bind.png)
+    ![usbipd bind](docs/img/usbipd-bind.png)
 
 4) Run `usbipd attach --wsl --busid <BUS ID>` to attach the USB device to WSL.
 
-    ![usbipd list](docs/img/usbipd-attach.png)
+    ![usbipd attach](docs/img/usbipd-attach.png)
 
     **NOTE**: Sometimes the binding fails when attaching the USB device, if this happends, `usbipd bind --force --busid <BUS ID>` must be used.
 
 5) In WSL, run `lsusb` to find the USB device.
 
-    ![usbipd list](docs/img/lsusb.png)
+    ![lsusb](docs/img/lsusb.png)
+
+### Using OpenOCD without `sudo`
+
+In WSL or in Linux environment, sometimes `sudo` is required to execute openocd since it will be dealing with USB.
+
+Execute `./scripts/setup-stlink.sh`, so using openOCD with the USB will not require `sudo`.
