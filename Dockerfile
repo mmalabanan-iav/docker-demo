@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git make python3 python3-pip \
     gcc-arm-none-eabi binutils-arm-none-eabi \
     libnewlib-arm-none-eabi libnewlib-dev \
+    cmake ninja-build \
  && rm -rf /var/lib/apt/lists/*
 
 
