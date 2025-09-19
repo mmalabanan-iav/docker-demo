@@ -35,6 +35,30 @@ docker run -it --rm --privileged -v "$PWD":/workspace docker-demo
 
 To exit out of the container, `Ctrl+D`.
 
+### Building the application
+
+1) Spin up the docker-demo container.
+2) To have CMake generate the build files, use the following command:
+
+    ```bash
+    cmake -B build -G Ninja
+    ```
+
+    > **NOTE**: If the build directory exists prior, delete the whole folder.
+
+3) To build the application, use the following command:
+
+    ```bash
+    cmake --build build
+    ```
+
+4) Now that the application has been built, you may exit out of the container by pressing `Ctrl + D`.
+5) To flash the application, use the following command:
+
+    ```bash
+    make flash
+    ```
+
 ### Controlling the LED
 
 1) Open minicom via terminal
